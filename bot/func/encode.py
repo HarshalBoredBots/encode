@@ -62,6 +62,9 @@ async def _run_ffmpeg(cmd, job, status_msg, duration, settings):
         stdout=asyncio.subprocess.DEVNULL,
         stderr=asyncio.subprocess.PIPE,
     )
+    # Store proc on the job so queue_manager.stop() can kill it immediately
+    # on Heroku SIGTERM without waiting for the encode to finish.
+    job.ffmpeg_proc = proc
 
     last_update = 0.0
     last_log    = 0.0
@@ -163,6 +166,7 @@ async def _run_ffmpeg(cmd, job, status_msg, duration, settings):
             pass
         log.warning("FFmpeg timed out for job %s", job.job_id)
     finally:
+        job.ffmpeg_proc = None  # Clear so shutdown logic knows proc is done
         reader.cancel()
         try:
             await reader

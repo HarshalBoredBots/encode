@@ -21,6 +21,9 @@ class Job:
     chat_id: int = 0
     message_id: int = 0
     cancel_requested: bool = False
+    # Live FFmpeg subprocess — set by _run_ffmpeg so shutdown can kill it fast.
+    # Not serialised to MongoDB (it's a runtime object).
+    ffmpeg_proc: object = field(default=None, repr=False, compare=False)
     # Stored for DB persistence / crash recovery
     src_chat_id: int = 0
     src_message_id: int = 0
@@ -152,41 +155,55 @@ class QueueManager:
                         log.warning("Could not mark job %s done in DB: %s", job.job_id, e)
                     self.queue.task_done()
 
-    async def stop(self, timeout: float = 3600.0):
+    async def stop(self, timeout: float = 25.0):
         """
-        Graceful shutdown:
-        1. Stop accepting new jobs from the queue.
-        2. Wait up to `timeout` seconds for any currently-running job to finish.
-        3. Only then cancel the worker task.
+        Heroku-safe shutdown:
+        Heroku sends SIGTERM then force-kills (SIGKILL) after only 30 seconds,
+        regardless of RAM usage or whether the encode is still running.
+        We must exit within that window — waiting for a long encode to finish
+        is NOT an option.
 
-        Heroku sends SIGTERM and gives 30 s before SIGKILL, but a dyno restart
-        triggered by a deploy waits until the process exits. We set a generous
-        timeout so a long encode is never killed mid-way by a deploy.
+        Strategy:
+        1. Stop accepting new jobs.
+        2. Immediately kill every active FFmpeg subprocess via job.ffmpeg_proc.
+        3. Wait up to `timeout` seconds (default 25 s) for job coroutines to
+           catch the kill, clean up temp files and update their status.
+        4. Cancel the worker task and exit.
         """
         self.running = False
 
-        # Wait for all running jobs to complete
         running_jobs = [j for j in self.jobs.values() if j.status == "running"]
         if running_jobs:
             log.info(
-                "Graceful shutdown: waiting for %d running job(s) to finish "
-                "(timeout=%.0fs)…",
-                len(running_jobs), timeout,
+                "Heroku SIGTERM: killing %d active FFmpeg process(es) immediately "
+                "to stay within the 30-second shutdown window.",
+                len(running_jobs),
             )
+            for j in running_jobs:
+                j.cancel_requested = True
+                # Kill the FFmpeg subprocess directly if we have a handle on it.
+                proc = getattr(j, "ffmpeg_proc", None)
+                if proc is not None:
+                    try:
+                        proc.kill()
+                        log.info(
+                            "Killed FFmpeg pid=%s for job %s", proc.pid, j.job_id[:8]
+                        )
+                    except Exception:
+                        pass
+
+            # Give job coroutines a moment to notice the kill and clean up.
             deadline = asyncio.get_event_loop().time() + timeout
             while True:
                 still_running = [j for j in self.jobs.values() if j.status == "running"]
                 if not still_running:
-                    log.info("All jobs finished. Shutting down.")
+                    log.info("All jobs cleaned up. Shutting down.")
                     break
                 if asyncio.get_event_loop().time() >= deadline:
                     log.warning(
-                        "Shutdown timeout reached; %d job(s) still running — "
-                        "forcing exit.", len(still_running)
+                        "Cleanup timeout; %d job(s) still marked running — "
+                        "exiting anyway.", len(still_running)
                     )
-                    for j in still_running:
-                        j.cancel_requested = True
-                    await asyncio.sleep(2)
                     break
                 await asyncio.sleep(1)
 

@@ -120,8 +120,8 @@ async def main():
         try:
             await idle()
         finally:
-            log.info("Stop signal received. Waiting for running jobs to finish before exit...")
-            await queue_manager.stop(timeout=3600.0)
+            log.info("Stop signal received (SIGTERM). Killing active FFmpeg jobs and exiting within 30s...")
+            await queue_manager.stop(timeout=25.0)
             log.info("Bot stopped.")
 
 if __name__ == "__main__":
