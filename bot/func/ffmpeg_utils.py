@@ -242,12 +242,22 @@ def generate_ffmpeg_cmd(input_path: str, output_path: str, settings: dict, probe
         elif codec == "libx265":
             # libx265 uses x265-params for threading; the global -threads flag
             # has no effect on it and can cause conflicts.
-            # lookahead-slices=0 disables slice-parallel lookahead — cuts peak RAM
-            # by ~30-50%, critical for 720p/1080p on a 1 GB Heroku dyno.
+            # Memory budget on Standard-2X (1 GB RAM):
+            #   1080p x265: pools=1, frame-threads=1 → ~500-600 MB peak  ✅ safe
+            #   1080p x265: pools=2, frame-threads=2 → ~800-950 MB peak  ❌ OOM
+            #   720p  x265: pools=2, frame-threads=2 → ~350-450 MB peak  ✅ safe
+            # lookahead-slices=0 saves another ~30-50 MB on top.
+            target_res_x265 = resolutions[0] if resolutions else "720p"
+            if target_res_x265 == "1080p":
+                x265_pools = 1
+                x265_frame_threads = 1
+            else:
+                x265_pools = threads
+                x265_frame_threads = min(threads, 2)
             cmd += [
                 "-crf", crf, "-preset", preset, "-tag:v", "hvc1",
                 "-x265-params",
-                f"pools={threads}:frame-threads={min(threads, 2)}:lookahead-slices=0",
+                f"pools={x265_pools}:frame-threads={x265_frame_threads}:lookahead-slices=0",
             ]
         elif codec == "libvpx-vp9":
             # row-mt already enables multi-threading; -threads controls tile/row workers

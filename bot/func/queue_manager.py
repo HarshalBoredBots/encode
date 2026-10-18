@@ -181,6 +181,7 @@ class QueueManager:
             )
             for j in running_jobs:
                 j.cancel_requested = True
+                j._sigterm_shutdown = True   # tells encode.py to show "server restart" message
                 # Kill the FFmpeg subprocess directly if we have a handle on it.
                 proc = getattr(j, "ffmpeg_proc", None)
                 if proc is not None:

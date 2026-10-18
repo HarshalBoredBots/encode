@@ -240,6 +240,7 @@ async def run_encode_job(client, job, media_ref, src_chat_id: int, src_message_i
         input_path = await download_manager.download(
             client, media_ref.file_id, input_path, message=status,
             ud_type="Downloading",
+            job=job,          # enables SIGTERM / cancel-aware abort
         )
     except Exception as e:
         log.exception("Download failed: %s", e)
@@ -315,6 +316,10 @@ async def run_encode_job(client, job, media_ref, src_chat_id: int, src_message_i
 
             out_paths.append((res, output_path))
 
+    except asyncio.CancelledError:
+        # SIGTERM / graceful shutdown killed this coroutine mid-encode.
+        job.cancel_requested = True
+        raise
     except Exception as e:
         log.exception("Encoding pipeline failed: %s", e)
         await _safe_edit(status, f"❌ <b>Encoding error:</b> <code>{e}</code>")
@@ -323,7 +328,14 @@ async def run_encode_job(client, job, media_ref, src_chat_id: int, src_message_i
         _safe_remove(input_path)
         for _, p in out_paths:
             _safe_remove(p)
-        await _safe_edit(status, "🛑 <b>Cancelled.</b>", parse_mode=enums.ParseMode.HTML, reply_markup=None)
+        # Distinguish a user cancel from a server restart / SIGTERM
+        cancel_text = (
+            "⚠️ <b>Job interrupted (server restart).</b>\n"
+            "The bot was redeployed mid-encode. Please re-send the file."
+            if getattr(job, "_sigterm_shutdown", False)
+            else "🛑 <b>Cancelled.</b>"
+        )
+        await _safe_edit(status, cancel_text, parse_mode=enums.ParseMode.HTML, reply_markup=None)
         return
 
     # ── Upload loop ──────────────────────────────────────────────────────────

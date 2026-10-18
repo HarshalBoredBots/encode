@@ -17,6 +17,7 @@ async def download(
     destination: str,
     message=None,
     ud_type: str = "Downloading",
+    job=None,          # <-- pass the Job so we can check cancel_requested
 ):
     os.makedirs(os.path.dirname(destination) or ".", exist_ok=True)
 
@@ -27,6 +28,26 @@ async def download(
             kwargs["progress"]      = progress_for_pyrogram
             kwargs["progress_args"] = (ud_type, message, start)
 
-        path = await client.download_media(file_id, **kwargs)
+        # Wrap in a Task so we can cancel it if SIGTERM / cancel arrives.
+        dl_task = asyncio.create_task(client.download_media(file_id, **kwargs))
+
+        # Poll for cancellation every second while the download runs.
+        while not dl_task.done():
+            if job is not None and job.cancel_requested:
+                dl_task.cancel()
+                try:
+                    await dl_task
+                except (asyncio.CancelledError, Exception):
+                    pass
+                raise asyncio.CancelledError("Download cancelled")
+            try:
+                await asyncio.wait_for(asyncio.shield(dl_task), timeout=1.0)
+            except asyncio.TimeoutError:
+                pass  # still running, loop again
+            except asyncio.CancelledError:
+                dl_task.cancel()
+                raise
+
+        path = dl_task.result()
         log.info("Downloaded %s -> %s (%.1fs)", file_id, path, time.time() - start)
         return path
