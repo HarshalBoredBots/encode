@@ -1,17 +1,14 @@
 import os
 import shutil
-from dotenv import load_dotenv
-
-load_dotenv()
 
 TG_BOT_TOKEN = os.environ.get("TG_BOT_TOKEN", "")
-APP_ID = int(os.environ.get("APP_ID") or 0)
-API_HASH = os.environ.get("API_HASH", "")
-LOG_CHANNEL = int(os.environ.get("LOG_CHANNEL") or 0)
-OWNER_ID = int(os.environ.get("OWNER_ID") or 0)
+APP_ID = 20140875
+API_HASH = "a06fa97d5a853ec2da79015b11335a17"
+LOG_CHANNEL = -1004384759946
+OWNER_ID = 1828405916
 PORT = int(os.environ.get("PORT", "8080"))
-BOT_NAME = os.environ.get("BOT_NAME", "Encoder Bot")
-BOT_VERSION = os.environ.get("BOT_VERSION", "1.0.0")
+BOT_NAME = "Encoder Bot"
+BOT_VERSION = "1.0.0"
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
 DATABASE_NAME = os.environ.get("DATABASE_NAME", "EncoderBot")
 
@@ -37,11 +34,6 @@ FONT_PATH = "bot/fonts/Kufam-SemiBold.ttf"
 FFMPEG_BIN = os.environ.get("FFMPEG_BIN", "/app/ffmpeg-static/ffmpeg")
 FFPROBE_BIN = os.environ.get("FFPROBE_BIN", "/app/ffmpeg-static/ffprobe")
 
-# On Heroku Standard-2X (2 vCPU), use both cores for FFmpeg.
-# The bot itself is I/O-bound (asyncio) and consumes negligible CPU during encoding,
-# so we don't need to reserve a core for it.
-# Override by setting FFMPEG_THREADS in your Heroku config vars if needed.
-# Heroku reports 8 CPUs but RAM is only 1GB
 # Cap threads at 2 to prevent OOM crashes (especially with SVT-AV1)
 _cpu_count = min(os.cpu_count() or 2, 2)
 FFMPEG_THREADS = int(os.environ.get("FFMPEG_THREADS", str(_cpu_count)))
@@ -64,20 +56,12 @@ if MAX_RESOLUTION not in _RESOLUTION_RANK:
 UI_UPDATE_INTERVAL = 4.0
 PROGRESS_CALLBACK_INTERVAL = 4.0
 
-ADMIN_IDS = {OWNER_ID} if OWNER_ID else set()
+ADMIN_IDS = {OWNER_ID}
 
 def validate_config():
     errors = []
     if not TG_BOT_TOKEN or ":" not in TG_BOT_TOKEN:
         errors.append("TG_BOT_TOKEN is missing or invalid.")
-    if not APP_ID:
-        errors.append("APP_ID is missing.")
-    if not API_HASH or API_HASH in ("your_api_hash", "changeme"):
-        errors.append("API_HASH is missing or is a placeholder.")
-    if not LOG_CHANNEL or LOG_CHANNEL >= 0:
-        errors.append("LOG_CHANNEL must be a negative integer (channel/group id).")
-    if not OWNER_ID:
-        errors.append("OWNER_ID is missing.")
     if not DATABASE_URL:
         errors.append("DATABASE_URL is missing.")
     if not shutil.which(FFMPEG_BIN) and not os.path.isfile(FFMPEG_BIN):
