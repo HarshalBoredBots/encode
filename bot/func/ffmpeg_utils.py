@@ -184,13 +184,6 @@ def generate_ffmpeg_cmd(input_path: str, output_path: str, settings: dict, probe
     codec = video.get("codec", "libx265")
     crf = str(video.get("crf", "23"))
     preset = video.get("preset", "veryfast")
-    # For libx265 on a 1 GB Heroku dyno, "slow" and "medium" use far too much
-    # RAM and CPU time (3-4x slower than veryfast with only marginal quality gain).
-    # Clamp anything slower than "veryfast" down to "veryfast".
-    _PRESET_SPEED = {p: i for i, p in enumerate(VALID_PRESETS)}  # ultrafast=0 … veryslow=8
-    _VERYFAST_IDX = _PRESET_SPEED.get("veryfast", 2)
-    if codec in ("libx264", "libx265") and _PRESET_SPEED.get(preset, 0) > _VERYFAST_IDX:
-        preset = "veryfast"
     resolutions = video.get("resolution") or ["480p"]
     if isinstance(resolutions, str):
         resolutions = [resolutions]
@@ -239,6 +232,12 @@ def generate_ffmpeg_cmd(input_path: str, output_path: str, settings: dict, probe
     else:
         cmd += ["-c:v", codec]
         threads = config.FFMPEG_THREADS
+        if codec in ("libx264", "libx265"):
+            # For x264/x265 on a 1 GB Heroku dyno, "slow"/"medium"/worse use
+            # far too much RAM. Clamp anything slower than "veryfast" down.
+            _PRESET_SPEED = {p: i for i, p in enumerate(VALID_PRESETS)}
+            if _PRESET_SPEED.get(preset, 0) > _PRESET_SPEED.get("veryfast", 2):
+                preset = "veryfast"
         if codec == "libx264":
             cmd += ["-crf", crf, "-preset", preset, "-threads", str(threads)]
         elif codec == "libx265":
@@ -253,13 +252,22 @@ def generate_ffmpeg_cmd(input_path: str, output_path: str, settings: dict, probe
             if target_res_x265 == "1080p":
                 x265_pools = 1
                 x265_frame_threads = 1
+                # merange=24   : default 57 → cuts motion-estimation RAM ~80 MB
+                # rc-lookahead=20 : default 40 → halves lookahead buffer ~40 MB
+                # bframes=3    : x265 default; explicit keeps it stable
+                x265_extra = "merange=24:rc-lookahead=20:bframes=3"
             else:
                 x265_pools = threads
                 x265_frame_threads = min(threads, 2)
+                x265_extra = ""
+            x265_params = (
+                f"pools={x265_pools}:frame-threads={x265_frame_threads}"
+                f":lookahead-slices=0"
+                + (f":{x265_extra}" if x265_extra else "")
+            )
             cmd += [
                 "-crf", crf, "-preset", preset, "-tag:v", "hvc1",
-                "-x265-params",
-                f"pools={x265_pools}:frame-threads={x265_frame_threads}:lookahead-slices=0",
+                "-x265-params", x265_params,
             ]
         elif codec == "libvpx-vp9":
             # row-mt already enables multi-threading; -threads controls tile/row workers

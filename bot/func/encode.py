@@ -2,6 +2,7 @@ import asyncio
 import copy
 import os
 import re
+import resource
 import shutil
 import time
 
@@ -59,11 +60,28 @@ def _encode_bar(pct: float, cur: float, total: float, speed_fps: float,
 _FPS_RE = re.compile(rb"fps=\s*([\d.]+)")
 
 
+def _ffmpeg_preexec():
+    """
+    Called in the child process after fork() but before exec().
+    Caps the FFmpeg process's virtual address space to 750 MB so that if x265
+    spikes past its expected ~600 MB peak it gets a clean MemoryError / SIGKILL
+    confined to the child — instead of the OS OOM-killer taking out the entire
+    Heroku dyno (which loses the bot, the queue, and the Telegram connection).
+    750 MB gives ~150 MB headroom above the expected 1080p x265 peak of ~600 MB.
+    """
+    limit = 750 * 1024 * 1024  # 750 MB
+    try:
+        resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
+    except Exception:
+        pass  # non-fatal: proceed without the cap if setrlimit fails
+
+
 async def _run_ffmpeg(cmd, job, status_msg, duration, settings):
     proc = await asyncio.create_subprocess_exec(
         *cmd,
         stdout=asyncio.subprocess.DEVNULL,
         stderr=asyncio.subprocess.PIPE,
+        preexec_fn=_ffmpeg_preexec,
     )
     # Store proc on the job so queue_manager.stop() can kill it immediately
     # on Heroku SIGTERM without waiting for the encode to finish.
@@ -143,7 +161,8 @@ async def _run_ffmpeg(cmd, job, status_msg, duration, settings):
                 fps_m     = _FPS_RE.search(line)
                 speed_fps = float(fps_m.group(1)) if fps_m else 0.0
 
-                # Heroku log heartbeat every 60s
+                # Heroku log heartbeat every 60 s — shared timer with the
+                # "no progress yet" branch above so they don't interleave.
                 if now - last_log >= LOG_INTERVAL:
                     last_log = now
                     log.info(

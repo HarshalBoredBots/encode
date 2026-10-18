@@ -161,7 +161,10 @@ async def s_preset(client, cq):
 @Client.on_callback_query(filters.regex(r"^sp:"))
 async def sp_set(client, cq):
     preset = cq.data.split(":", 1)[1]
-    if preset not in VALID_PRESETS:
+    # VALID_PRESETS covers x264/x265 string presets (ultrafast … veryslow).
+    # SVT-AV1 uses numeric presets 0-13; accept those too.
+    svt_presets = {str(i) for i in range(14)}
+    if preset not in VALID_PRESETS and preset not in svt_presets:
         await cq.answer("Invalid preset.", show_alert=True)
         return
     s = await database.get_user_settings(cq.from_user.id)

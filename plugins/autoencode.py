@@ -267,6 +267,7 @@ async def run_autoencode_job(
         input_path = await download_manager.download(
             client, media_ref.file_id, input_path,
             message=status, ud_type="Downloading",
+            job=job,
         )
     except Exception as e:
         log.exception("Auto-encode download failed: %s", e)
@@ -317,11 +318,14 @@ async def run_autoencode_job(
             cmd = generate_ffmpeg_cmd(input_path, output_path, local_settings, probe_data)
             log.info("Auto FFmpeg cmd (%s): %s", res, " ".join(cmd))
 
-            # Notify LOG_CHANNEL that encoding has started for this resolution
+            # Notify LOG_CHANNEL that encoding has started for this resolution.
+            # Capture res in the default argument to avoid the late-binding trap
+            # (all lambdas in the loop would otherwise share the final value of res).
+            _res = res
             try:
-                await tg_call(lambda: client.send_message(
+                await tg_call(lambda r=_res: client.send_message(
                     config.LOG_CHANNEL,
-                    f"🎬 Auto job `{job.job_id[:8]}` started encoding <b>{res}</b>\n"
+                    f"🎬 Auto job `{job.job_id[:8]}` started encoding <b>{r}</b>\n"
                     f"Output: {output_filename}\n"
                     f"Duration: {int(duration)}s",
                 ))
@@ -343,11 +347,11 @@ async def run_autoencode_job(
                 await _safe_edit(status, fail_msg)
                 # Always notify LOG_CHANNEL so the failure is never silent
                 try:
-                    await tg_call(lambda: client.send_message(
+                    await tg_call(lambda r=_res, e=exists, sz=size: client.send_message(
                         config.LOG_CHANNEL,
                         f"❌ Auto job `{job.job_id}` encode failed\n"
                         f"Output: {output_filename}\n"
-                        f"Res: {res} — no output file (exists={exists} size={size})",
+                        f"Res: {r} — no output file (exists={e} size={sz})",
                     ))
                 except Exception:
                     pass
