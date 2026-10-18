@@ -288,6 +288,20 @@ async def run_autoencode_job(
 
     duration = float(probe_data.get("duration") or 0)
 
+    # Integrity check: corrupt or truncated download → abort cleanly.
+    if duration <= 0 or not probe_data.get("video_codec"):
+        log.error(
+            "Integrity check failed for auto job %s: duration=%.1f video_codec=%s — file corrupt",
+            job.job_id, duration, probe_data.get("video_codec"),
+        )
+        _safe_remove(input_path)
+        await _safe_edit(
+            status,
+            "❌ <b>Download appears corrupt</b> — ffprobe could not read the file.\n"
+            "Please re-send the file.",
+        )
+        return
+
     out_paths = []
 
     # ── Encode loop (one pass per resolution) ────────────────────────────────

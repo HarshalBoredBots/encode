@@ -317,6 +317,22 @@ async def run_encode_job(client, job, media_ref, src_chat_id: int, src_message_i
 
     duration = float(probe_data.get("duration") or 0)
 
+    # Integrity check: if ffprobe can't find a video stream or reports zero
+    # duration the file is corrupt or was truncated during download.
+    if duration <= 0 or not probe_data.get("video_codec"):
+        log.error(
+            "Integrity check failed for job %s: duration=%.1f video_codec=%s — file corrupt",
+            job.job_id, duration, probe_data.get("video_codec"),
+        )
+        _safe_remove(input_path)
+        await _safe_edit(
+            status,
+            "❌ <b>Download appears corrupt</b> — ffprobe could not read the file.\n"
+            "Please re-send the file.",
+            reply_markup=None,
+        )
+        return
+
     out_paths = []
 
     # ── Encode loop ──────────────────────────────────────────────────────────
