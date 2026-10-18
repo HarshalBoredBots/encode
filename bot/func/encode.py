@@ -20,7 +20,9 @@ import database
 
 log = get_logger(__name__)
 
-_TIME_RE = re.compile(rb"time=(\d+):(\d+):([\d.]+)")
+# Matches both -stats format: time=HH:MM:SS.ms
+# and -progress format:       out_time=HH:MM:SS.ms
+_TIME_RE = re.compile(rb"(?:out_)?time=(\d+):(\d+):([\d.]+)")
 
 
 def _cancel_markup(job_id: str) -> InlineKeyboardMarkup:
@@ -53,6 +55,7 @@ def _encode_bar(pct: float, cur: float, total: float, speed_fps: float,
     )
 
 
+# fps= appears in both -stats and -progress output
 _FPS_RE = re.compile(rb"fps=\s*([\d.]+)")
 
 
@@ -74,18 +77,11 @@ async def _run_ffmpeg(cmd, job, status_msg, duration, settings):
 
     async def read_stderr():
         nonlocal last_update, last_log
+        # FFmpeg writes stats with \r (carriage return), NOT \n (newline).
+        # readline() blocks forever waiting for \n that never comes.
+        # Instead we read raw chunks and split on both \r and \n ourselves.
+        buf = b""
         while True:
-            try:
-                line = await proc.stderr.readline()
-            except Exception:
-                break
-            if not line:
-                break
-
-            decoded = line.decode(errors="replace").rstrip()
-            if decoded:
-                stderr_lines.append(decoded)
-
             if job.cancel_requested:
                 try:
                     proc.kill()
@@ -93,78 +89,110 @@ async def _run_ffmpeg(cmd, job, status_msg, duration, settings):
                     pass
                 return
 
-            now = time.time()
-            m   = _TIME_RE.search(line)
-            if not m or duration <= 0:
-                # No progress line yet (e.g. audio pre-scan phase).
-                # Still emit a heartbeat log every 60s so Heroku doesn't
-                # recycle the dyno due to log inactivity.
+            try:
+                chunk = await asyncio.wait_for(
+                    proc.stderr.read(4096), timeout=5.0
+                )
+            except asyncio.TimeoutError:
+                # No data for 5s — emit heartbeat and check if proc is done
+                now = time.time()
                 if now - last_log >= LOG_INTERVAL:
                     last_log = now
                     log.info(
-                        "FFmpeg running (no progress yet) job=%s pid=%d — "
-                        "audio pre-scan or startup phase",
+                        "FFmpeg running (no output) job=%s pid=%d",
                         job.job_id[:8], proc.pid,
                     )
+                if proc.returncode is not None:
+                    break
                 continue
+            except Exception:
+                break
 
-            h, mm, ss = int(m.group(1)), int(m.group(2)), float(m.group(3))
-            cur = h * 3600 + mm * 60 + ss
-            pct = min(cur / duration, 1.0)
+            if not chunk:
+                break
 
-            # fps from the same stderr line
-            fps_m     = _FPS_RE.search(line)
-            speed_fps = float(fps_m.group(1)) if fps_m else 0.0
+            buf += chunk
+            # Split on both \r and \n so we catch FFmpeg's \r-terminated stats
+            parts = re.split(rb"[
+\n]", buf)
+            buf = parts[-1]  # keep incomplete last part in buffer
 
-            # Heroku log heartbeat
-            if now - last_log >= LOG_INTERVAL:
-                last_log = now
-                log.info(
-                    "Encoding [%s] job=%s res=%s %.1f%% (%s / %s) "
-                    "crf=%s preset=%s fps=%.1f pid=%d",
-                    job.file_name or "unknown",
-                    job.job_id[:8],
-                    v.get("resolution", ["?"])[0],
-                    pct * 100,
-                    TimeFormatter(int(cur)),
-                    TimeFormatter(int(duration)),
-                    v.get("crf", "?"),
-                    v.get("preset", "?"),
-                    speed_fps,
-                    proc.pid,
-                )
+            for line in parts[:-1]:
+                line = line.strip()
+                if not line:
+                    continue
 
-            # Telegram progress update (throttled)
-            if now - last_update < config.UI_UPDATE_INTERVAL:
-                continue
-            last_update = now
+                decoded = line.decode(errors="replace")
+                if decoded:
+                    stderr_lines.append(decoded)
 
-            if status_msg is not None:
-                resolutions  = list(v.get("resolution") or ["720p"])
-                current_res  = resolutions[0]
-                res_idx      = getattr(job, "_current_res_idx", 0)
+                now = time.time()
+                m   = _TIME_RE.search(line)
+                if not m or duration <= 0:
+                    if now - last_log >= LOG_INTERVAL:
+                        last_log = now
+                        log.info(
+                            "FFmpeg running (no progress yet) job=%s pid=%d",
+                            job.job_id[:8], proc.pid,
+                        )
+                    continue
 
-                text = _encode_bar(
-                    pct        = pct,
-                    cur        = cur,
-                    total      = duration,
-                    speed_fps  = speed_fps,
-                    res        = current_res,
-                    idx        = res_idx,
-                    total_res  = len(resolutions),
-                    codec      = v.get("codec", "libx264"),
-                    crf        = v.get("crf", "?"),
-                    preset     = v.get("preset", "?"),
-                    job_id     = job.job_id,
-                )
-                try:
-                    await status_msg.edit_text(
-                        text,
-                        parse_mode   = enums.ParseMode.HTML,
-                        reply_markup = _cancel_markup(job.job_id),
+                h, mm, ss = int(m.group(1)), int(m.group(2)), float(m.group(3))
+                cur = h * 3600 + mm * 60 + ss
+                pct = min(cur / duration, 1.0)
+
+                fps_m     = _FPS_RE.search(line)
+                speed_fps = float(fps_m.group(1)) if fps_m else 0.0
+
+                # Heroku log heartbeat every 60s
+                if now - last_log >= LOG_INTERVAL:
+                    last_log = now
+                    log.info(
+                        "Encoding [%s] job=%s res=%s %.1f%% (%s / %s) "
+                        "crf=%s preset=%s fps=%.1f pid=%d",
+                        job.file_name or "unknown",
+                        job.job_id[:8],
+                        v.get("resolution", ["?"])[0],
+                        pct * 100,
+                        TimeFormatter(int(cur)),
+                        TimeFormatter(int(duration)),
+                        v.get("crf", "?"),
+                        v.get("preset", "?"),
+                        speed_fps,
+                        proc.pid,
                     )
-                except Exception:
-                    pass
+
+                # Telegram progress update (throttled)
+                if now - last_update < config.UI_UPDATE_INTERVAL:
+                    continue
+                last_update = now
+
+                if status_msg is not None:
+                    resolutions  = list(v.get("resolution") or ["720p"])
+                    current_res  = resolutions[0]
+                    res_idx      = getattr(job, "_current_res_idx", 0)
+
+                    text = _encode_bar(
+                        pct        = pct,
+                        cur        = cur,
+                        total      = duration,
+                        speed_fps  = speed_fps,
+                        res        = current_res,
+                        idx        = res_idx,
+                        total_res  = len(resolutions),
+                        codec      = v.get("codec", "libx264"),
+                        crf        = v.get("crf", "?"),
+                        preset     = v.get("preset", "?"),
+                        job_id     = job.job_id,
+                    )
+                    try:
+                        await status_msg.edit_text(
+                            text,
+                            parse_mode   = enums.ParseMode.HTML,
+                            reply_markup = _cancel_markup(job.job_id),
+                        )
+                    except Exception:
+                        pass
 
     reader = asyncio.create_task(read_stderr())
     try:

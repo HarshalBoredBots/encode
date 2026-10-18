@@ -203,7 +203,9 @@ def generate_ffmpeg_cmd(input_path: str, output_path: str, settings: dict, probe
     src_fps = float(probe_data.get("fps") or 0)
     duration = float(probe_data.get("duration") or 0)
 
-    cmd = [config.FFMPEG_BIN, "-hide_banner", "-loglevel", "error", "-stats", "-y"]
+    cmd = [config.FFMPEG_BIN, "-hide_banner", "-loglevel", "error",
+               "-progress", "pipe:2",  # newline-terminated progress to stderr
+               "-nostats", "-y"]
 
     trim_start = float(video.get("trim_start") or 0)
     trim_end = float(video.get("trim_end") or 0)
