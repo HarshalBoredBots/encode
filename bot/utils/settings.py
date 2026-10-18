@@ -4,6 +4,9 @@ import re
 
 DEFAULT_FONT_PATH = "bot/fonts/Kufam-SemiBold.ttf"
 
+# Resolution rank for MAX_RESOLUTION enforcement (higher = larger)
+_RESOLUTION_RANK = {"1080p": 4, "720p": 3, "480p": 2, "360p": 1}
+
 VALID_CODECS = {"libx264", "libx265", "libvpx-vp9", "libsvtav1"}
 VALID_PRESETS = [
     "ultrafast", "superfast", "veryfast", "faster", "fast",
@@ -26,9 +29,9 @@ DEFAULT_SETTINGS = {
     "profile": "custom",
     "video": {
         "crf": "23",
-        "preset": "medium",
-        "resolution": ["720p"],
-        "codec": "libx264",
+        "preset": "veryfast",
+        "resolution": ["480p"],
+        "codec": "libx265",
         "subtitle_mode": "copy",
         "remux": False,
         "sample_seconds": 0,
@@ -85,8 +88,8 @@ QUALITY_PRESETS = {
     },
     "compact": {
         "label": "Compact",
-        "description": "HEVC · slow · 128k · smallest file",
-        "video": {"codec": "libx265", "crf": "28", "preset": "slow"},
+        "description": "HEVC · veryfast · 128k · good compression on Heroku",
+        "video": {"codec": "libx265", "crf": "28", "preset": "veryfast"},
         "audio": {"codec": "aac", "bitrate": "128k"},
     },
     "av1": {
@@ -135,12 +138,20 @@ def normalize_settings(raw) -> dict:
         if video.get("preset") not in VALID_PRESETS:
             video["preset"] = "medium"
 
-    res = video.get("resolution") or ["720p"]
+    res = video.get("resolution") or ["480p"]
     if isinstance(res, str):
         res = [res]
     res = [r for r in res if r in VALID_RESOLUTIONS]
     if not res:
-        res = ["720p"]
+        res = ["480p"]
+    # Enforce MAX_RESOLUTION: silently clamp any resolution that exceeds the
+    # cap set via the MAX_RESOLUTION env var for this Heroku app instance.
+    try:
+        from bot import config as _cfg
+        _max_rank = _RESOLUTION_RANK.get(_cfg.MAX_RESOLUTION, 2)
+        res = [r for r in res if _RESOLUTION_RANK.get(r, 0) <= _max_rank] or [_cfg.MAX_RESOLUTION]
+    except Exception:
+        pass
     seen = set()
     video["resolution"] = [r for r in res if not (r in seen or seen.add(r))]
 

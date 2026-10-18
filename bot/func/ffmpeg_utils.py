@@ -181,10 +181,17 @@ def generate_ffmpeg_cmd(input_path: str, output_path: str, settings: dict, probe
     custom = settings.get("custom_ffmpeg", {}) or {}
     active_custom = settings.get("active_custom_ffmpeg", "")
 
-    codec = video.get("codec", "libx264")
+    codec = video.get("codec", "libx265")
     crf = str(video.get("crf", "23"))
-    preset = video.get("preset", "slow")
-    resolutions = video.get("resolution") or ["720p"]
+    preset = video.get("preset", "veryfast")
+    # For libx265 on a 1 GB Heroku dyno, "slow" and "medium" use far too much
+    # RAM and CPU time (3-4x slower than veryfast with only marginal quality gain).
+    # Clamp anything slower than "veryfast" down to "veryfast".
+    _PRESET_SPEED = {p: i for i, p in enumerate(VALID_PRESETS)}  # ultrafast=0 … veryslow=8
+    _VERYFAST_IDX = _PRESET_SPEED.get("veryfast", 2)
+    if codec in ("libx264", "libx265") and _PRESET_SPEED.get(preset, 0) > _VERYFAST_IDX:
+        preset = "veryfast"
+    resolutions = video.get("resolution") or ["480p"]
     if isinstance(resolutions, str):
         resolutions = [resolutions]
     sub_mode = video.get("subtitle_mode", "copy")
