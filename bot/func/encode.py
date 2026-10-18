@@ -113,8 +113,7 @@ async def _run_ffmpeg(cmd, job, status_msg, duration, settings):
 
             buf += chunk
             # Split on both \r and \n so we catch FFmpeg's \r-terminated stats
-            parts = re.split(rb"[
-\n]", buf)
+            parts = re.split(rb"\r|\n", buf)
             buf = parts[-1]  # keep incomplete last part in buffer
 
             for line in parts[:-1]:
