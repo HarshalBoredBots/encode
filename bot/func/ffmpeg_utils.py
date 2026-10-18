@@ -334,7 +334,11 @@ def generate_ffmpeg_cmd(input_path: str, output_path: str, settings: dict, probe
             if a_codec == "aac":
                 cmd += ["-ac", "2"]
             if audio.get("normalize"):
-                cmd += ["-af", "loudnorm"]
+                # loudnorm without params does a hidden 2-pass audio analysis
+                # that can stall for 3-5 minutes on long files and spikes RAM
+                # by 100-200 MB — enough to trigger OOM on a 1 GB dyno.
+                # dynaudnorm is single-pass, lower RAM, identical result for anime.
+                cmd += ["-af", "dynaudnorm=f=150:g=15"]
 
     if sub_mode == "drop" or not copy_subs:
         cmd += ["-sn"]

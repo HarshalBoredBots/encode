@@ -96,6 +96,16 @@ async def _run_ffmpeg(cmd, job, status_msg, duration, settings):
             now = time.time()
             m   = _TIME_RE.search(line)
             if not m or duration <= 0:
+                # No progress line yet (e.g. audio pre-scan phase).
+                # Still emit a heartbeat log every 60s so Heroku doesn't
+                # recycle the dyno due to log inactivity.
+                if now - last_log >= LOG_INTERVAL:
+                    last_log = now
+                    log.info(
+                        "FFmpeg running (no progress yet) job=%s pid=%d — "
+                        "audio pre-scan or startup phase",
+                        job.job_id[:8], proc.pid,
+                    )
                 continue
 
             h, mm, ss = int(m.group(1)), int(m.group(2)), float(m.group(3))
