@@ -4,7 +4,7 @@ import shutil
 TG_BOT_TOKEN = os.environ.get("TG_BOT_TOKEN", "")
 APP_ID = 20140875
 API_HASH = "a06fa97d5a853ec2da79015b11335a17"
-LOG_CHANNEL = int(os.environ.get("LOG_CHANNEL") or 0)
+LOG_CHANNEL = -1004384759946
 OWNER_ID = 1828405916
 PORT = int(os.environ.get("PORT", "8080"))
 BOT_NAME = "Encoder Bot"
