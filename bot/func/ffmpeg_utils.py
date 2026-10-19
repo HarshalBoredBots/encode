@@ -204,7 +204,11 @@ def generate_ffmpeg_cmd(input_path: str, output_path: str, settings: dict, probe
     trim_end = float(video.get("trim_end") or 0)
     if trim_start > 0:
         cmd += ["-ss", str(trim_start)]
-    cmd += ["-i", input_path]
+    # -threads 1 on the input side forces single-threaded H.264/HEVC decoding.
+    # The default thread count allocates one full DPB reference-frame buffer per
+    # thread (~40-60 MB each at 1080p), which was pushing total RSS past the
+    # 900 MB ulimit before x265 encoding even started.
+    cmd += ["-threads", "1", "-i", input_path]
     if trim_start > 0 and trim_end > trim_start:
         cmd += ["-to", str(trim_end - trim_start)]
 

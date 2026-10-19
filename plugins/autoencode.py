@@ -346,26 +346,38 @@ async def run_autoencode_job(
             except Exception:
                 pass
 
-            await _run_ffmpeg(cmd, job, status, duration, local_settings)
+            ffmpeg_error = None
+            try:
+                await _run_ffmpeg(cmd, job, status, duration, local_settings)
+            except Exception as _fe:
+                ffmpeg_error = _fe
 
             if job.cancel_requested:
                 break
+
             exists = os.path.isfile(output_path)
             size   = os.path.getsize(output_path) if exists else 0
-            if not exists or size == 0:
+
+            # Treat as failure if: ffmpeg raised, output missing, or output is
+            # suspiciously small (< 512 KB — a real video is always larger;
+            # this catches the "4 frames of garbage" partial-write case).
+            MIN_VALID_SIZE = 512 * 1024  # 512 KB
+            if ffmpeg_error or not exists or size < MIN_VALID_SIZE:
+                reason = str(ffmpeg_error) if ffmpeg_error else f"exists={exists} size={size}"
                 log.error(
-                    "Auto-encode produced no output for %s (exists=%s size=%d)",
-                    res, exists, size,
+                    "Auto-encode produced no usable output for %s (%s)",
+                    res, reason,
                 )
-                fail_msg = f"❌ Encoding failed for <b>{res}</b> — no output file produced."
+                # Clean up the partial/garbage output file immediately.
+                _safe_remove(output_path)
+                fail_msg = f"❌ Encoding failed for <b>{res}</b> — {reason}"
                 await _safe_edit(status, fail_msg)
-                # Always notify LOG_CHANNEL so the failure is never silent
                 try:
-                    await tg_call(lambda r=_res, e=exists, sz=size: client.send_message(
+                    await tg_call(lambda r=_res, rs=reason: client.send_message(
                         config.LOG_CHANNEL,
                         f"❌ Auto job `{job.job_id}` encode failed\n"
                         f"Output: {output_filename}\n"
-                        f"Res: {r} — no output file (exists={e} size={sz})",
+                        f"Res: {r} — {rs}",
                     ))
                 except Exception:
                     pass

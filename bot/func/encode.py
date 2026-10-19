@@ -63,13 +63,18 @@ _FPS_RE = re.compile(rb"fps=\s*([\d.]+)")
 def _ffmpeg_preexec():
     """
     Called in the child process after fork() but before exec().
-    Caps the FFmpeg process's virtual address space to 750 MB so that if x265
-    spikes past its expected ~600 MB peak it gets a clean MemoryError / SIGKILL
-    confined to the child — instead of the OS OOM-killer taking out the entire
-    Heroku dyno (which loses the bot, the queue, and the Telegram connection).
-    750 MB gives ~150 MB headroom above the expected 1080p x265 peak of ~600 MB.
+    Caps FFmpeg's virtual address space to 900 MB.
+
+    Why 900 MB (raised from 750 MB):
+      - H.264 1080p decoding with the default thread count allocates large
+        reference-frame DPB buffers (~150-200 MB) before x265 encoding even
+        starts. The 750 MB cap was being hit by the *decoder*, not the encoder.
+      - 900 MB leaves ~100 MB for the Python/bot process on a 1 GB Standard-2X
+        dyno, which is enough under normal operation.
+      - The input thread count is also forced to 1 (see generate_ffmpeg_cmd)
+        which cuts decoder RAM by ~40-60 MB independently.
     """
-    limit = 750 * 1024 * 1024  # 750 MB
+    limit = 900 * 1024 * 1024  # 900 MB
     try:
         resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
     except Exception:
@@ -236,6 +241,14 @@ async def _run_ffmpeg(cmd, job, status_msg, duration, settings):
             "\n".join(stderr_lines[-20:]),
         )
 
+    # Raise on non-zero exit so callers get a clear failure signal and never
+    # accidentally treat partial output (a few frames of garbage) as success.
+    if proc.returncode not in (0, None):
+        stderr_tail = "\n".join(stderr_lines[-5:])
+        raise RuntimeError(
+            f"FFmpeg exited with code {proc.returncode}. stderr: {stderr_tail}"
+        )
+
 
 async def _safe_send_message(client, chat_id, text, **kwargs):
     kwargs.setdefault("parse_mode", enums.ParseMode.HTML)
@@ -365,7 +378,11 @@ async def run_encode_job(client, job, media_ref, src_chat_id: int, src_message_i
             cmd = generate_ffmpeg_cmd(input_path, output_path, local_settings, probe_data)
             log.info("FFmpeg cmd (%s): %s", res, " ".join(cmd))
 
-            await _run_ffmpeg(cmd, job, status, duration, local_settings)
+            ffmpeg_error = None
+            try:
+                await _run_ffmpeg(cmd, job, status, duration, local_settings)
+            except Exception as _fe:
+                ffmpeg_error = _fe
 
             if job.cancel_requested:
                 break
@@ -374,11 +391,14 @@ async def run_encode_job(client, job, media_ref, src_chat_id: int, src_message_i
             size   = os.path.getsize(output_path) if exists else 0
             log.info("Output check: %s exists=%s size=%d", output_path, exists, size)
 
-            if not exists or size == 0:
-                log.error("Encoding produced no output for %s", res)
+            MIN_VALID_SIZE = 512 * 1024  # 512 KB — real videos are always larger
+            if ffmpeg_error or not exists or size < MIN_VALID_SIZE:
+                reason = str(ffmpeg_error) if ffmpeg_error else f"exists={exists} size={size}"
+                log.error("Encoding produced no usable output for %s: %s", res, reason)
+                _safe_remove(output_path)  # clean up garbage partial file
                 await _safe_edit(
                     status,
-                    f"❌ <b>Encoding failed for {res}</b> — no output file produced.",
+                    f"❌ <b>Encoding failed for {res}</b> — {reason}",
                     reply_markup = _cancel_markup(job.job_id),
                 )
                 continue
