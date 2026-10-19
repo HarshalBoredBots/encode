@@ -74,7 +74,11 @@ def _ffmpeg_preexec():
       - The input thread count is also forced to 1 (see generate_ffmpeg_cmd)
         which cuts decoder RAM by ~40-60 MB independently.
     """
-    limit = 900 * 1024 * 1024  # 900 MB
+    # 950 MB virtual cap. Previous 900 MB triggered SIGBUS (physical RAM
+    # exhausted under the virtual limit) — the extra 50 MB gives the kernel
+    # enough headroom to back the mmap'd regions FFmpeg needs for the decoder
+    # DPB + encoder lookahead simultaneously without hitting physical RSS limit.
+    limit = 950 * 1024 * 1024  # 950 MB
     try:
         resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
     except Exception:

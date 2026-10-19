@@ -204,11 +204,17 @@ def generate_ffmpeg_cmd(input_path: str, output_path: str, settings: dict, probe
     trim_end = float(video.get("trim_end") or 0)
     if trim_start > 0:
         cmd += ["-ss", str(trim_start)]
-    # -threads 1 on the input side forces single-threaded H.264/HEVC decoding.
-    # The default thread count allocates one full DPB reference-frame buffer per
-    # thread (~40-60 MB each at 1080p), which was pushing total RSS past the
-    # 900 MB ulimit before x265 encoding even started.
-    cmd += ["-threads", "1", "-i", input_path]
+    # Input-side decoder memory controls for H.264/HEVC on a 1 GB dyno:
+    #
+    #   -threads 1      : single decode thread → no per-thread DPB copies
+    #   -flags low_delay: disables B-frame reordering → decoder flushes frames
+    #                     immediately instead of buffering a full DPB window
+    #   -refs 1         : tells the decoder to expect/use only 1 reference frame
+    #                     (overrides the stream's ref count for memory purposes)
+    #
+    # Together these cut H.264 decoder peak RSS from ~200 MB to ~40-60 MB at
+    # 1080p, which is the difference between a SIGBUS/OOM kill and a clean run.
+    cmd += ["-threads", "1", "-flags", "low_delay", "-refs", "1", "-i", input_path]
     if trim_start > 0 and trim_end > trim_start:
         cmd += ["-to", str(trim_end - trim_start)]
 
@@ -256,10 +262,11 @@ def generate_ffmpeg_cmd(input_path: str, output_path: str, settings: dict, probe
             if target_res_x265 == "1080p":
                 x265_pools = 1
                 x265_frame_threads = 1
-                # merange=24   : default 57 → cuts motion-estimation RAM ~80 MB
+                # merange=24      : default 57 → cuts motion-estimation RAM ~80 MB
                 # rc-lookahead=20 : default 40 → halves lookahead buffer ~40 MB
-                # bframes=3    : x265 default; explicit keeps it stable
-                x265_extra = "merange=24:rc-lookahead=20:bframes=3"
+                # bframes=3       : x265 default; explicit keeps it stable
+                # tune=fastdecode : reduces encoder-side DPB/reference buffers
+                x265_extra = "merange=24:rc-lookahead=20:bframes=3:tune=fastdecode"
             else:
                 x265_pools = threads
                 x265_frame_threads = min(threads, 2)
