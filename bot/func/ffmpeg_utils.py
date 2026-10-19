@@ -204,19 +204,17 @@ def generate_ffmpeg_cmd(input_path: str, output_path: str, settings: dict, probe
     trim_end = float(video.get("trim_end") or 0)
     if trim_start > 0:
         cmd += ["-ss", str(trim_start)]
-    # Input-side decoder memory controls for H.264/HEVC on a 1 GB dyno:
+    # Input-side decoder memory control:
     #
-    #   -threads 1         : single decode thread → no per-thread DPB copies,
-    #                        saves ~40-60 MB per thread at 1080p
-    #   -flags:v low_delay : scoped to the video stream only (global -flags can
-    #                        break container demuxing); disables B-frame
-    #                        reordering so the decoder flushes frames immediately
-    #                        instead of buffering a full DPB window (~96 MB at
-    #                        1080p high-profile with 16 ref frames)
+    #   -threads 1 : single decode thread → no per-thread DPB copies,
+    #                saves ~40-60 MB per thread at 1080p.
     #
-    # NOTE: -refs is an encoder-only option and must NOT be placed here —
-    # FFmpeg rejects it as "not a decoding option" and refuses to open the file.
-    cmd += ["-threads", "1", "-flags:v", "low_delay", "-i", input_path]
+    # NOTE: -flags:v low_delay was tried here but causes a SIGSEGV (exit -11)
+    # in current BtbN FFmpeg GPL builds when the input container is MKV/WebM.
+    # It crashes during demuxer init before writing anything to stderr.
+    # Removed entirely — -threads 1 + the x265-params memory reductions are
+    # sufficient to keep RSS within the dyno limit.
+    cmd += ["-threads", "1", "-i", input_path]
     if trim_start > 0 and trim_end > trim_start:
         cmd += ["-to", str(trim_end - trim_start)]
 
