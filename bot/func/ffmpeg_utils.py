@@ -40,7 +40,20 @@ BAD_CHARS_RE = re.compile(r"[;&|`$()<>\\\n\r/]")
 def build_watermark_filter(wm: dict, video_duration: float, frame_width: int, frame_height: int) -> str:
     import os
     raw_font = wm.get("font_path") or DEFAULT_FONT_PATH
-    font_path = os.path.abspath(raw_font).replace("'", r"\'")
+    font_path = os.path.abspath(raw_font)
+
+    # libfreetype in current BtbN FFmpeg GPL builds segfaults (SIGSEGV, exit -11)
+    # with empty stderr when the font file is missing, rather than returning an
+    # error. Guard here so we raise a clear Python exception instead of letting
+    # FFmpeg crash silently and killing the whole encode job.
+    if not os.path.isfile(font_path):
+        raise FileNotFoundError(
+            f"Watermark font not found: {font_path!r}. "
+            "Place the font file at that path or update DEFAULT_FONT_PATH in "
+            "bot/utils/settings.py."
+        )
+
+    font_path = font_path.replace("'", r"\'")
     text = str(wm.get("text", "Encoded")).replace("'", r"\'").replace(":", r"\:")
     color = wm.get("color", "white")
     font_size = int(wm.get("font_size", 24))

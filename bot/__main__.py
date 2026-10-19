@@ -92,8 +92,38 @@ async def check_ffmpeg():
     except FileNotFoundError as e:
         raise RuntimeError(f"ffmpeg/ffprobe not installed: {e}")
 
+def ensure_fonts():
+    """
+    Download the watermark font if it isn't committed to the repo.
+    On Heroku the dyno filesystem is ephemeral so font files don't persist
+    across deploys unless they're in the Git repo.  Rather than require that,
+    we download Kufam-SemiBold from Google Fonts on startup (< 100 KB, fast).
+    """
+    import urllib.request
+    font_path = os.path.abspath(config.FONT_PATH)
+    if os.path.isfile(font_path) and os.path.getsize(font_path) > 0:
+        return  # already present
+
+    os.makedirs(os.path.dirname(font_path), exist_ok=True)
+    # Kufam is a Google Font available via their static CDN.
+    url = (
+        "https://fonts.gstatic.com/s/kufam/v21/"
+        "C8c84cY7pG7w_oSJDszBXsKIQLl_lbs.ttf"
+    )
+    log.info("Downloading watermark font from Google Fonts -> %s", font_path)
+    try:
+        urllib.request.urlretrieve(url, font_path)
+        log.info("Font downloaded: %s (%d bytes)", font_path, os.path.getsize(font_path))
+    except Exception as e:
+        log.error("Failed to download watermark font: %s — watermark will be skipped", e)
+        # Don't raise: the bot can still encode without the watermark.
+        # build_watermark_filter() will raise FileNotFoundError which the
+        # per-resolution exception handler catches and reports to the user.
+
+
 async def main():
     await check_ffmpeg()
+    ensure_fonts()
     validate_config()
     await database.init_db()
     await start_server(config.PORT)
