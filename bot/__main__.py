@@ -92,8 +92,24 @@ async def check_ffmpeg():
     except FileNotFoundError as e:
         raise RuntimeError(f"ffmpeg/ffprobe not installed: {e}")
 
+def ensure_fonts():
+    import urllib.request
+    font_path = os.path.abspath(config.FONT_PATH)
+    if os.path.isfile(font_path) and os.path.getsize(font_path) > 0:
+        return
+    os.makedirs(os.path.dirname(font_path), exist_ok=True)
+    # DejaVu Sans Bold — plain TTF, works reliably with FFmpeg's embedded libfreetype.
+    url = "https://github.com/dejavu-fonts/dejavu-fonts/raw/master/ttf/DejaVuSans-Bold.ttf"
+    log.info("Downloading watermark font -> %s", font_path)
+    try:
+        urllib.request.urlretrieve(url, font_path)
+        log.info("Font ready: %s (%d bytes)", font_path, os.path.getsize(font_path))
+    except Exception as e:
+        log.warning("Font download failed: %s — watermark will be skipped if no font uploaded", e)
+
 async def main():
     await check_ffmpeg()
+    ensure_fonts()
     validate_config()
     await database.init_db()
     await start_server(config.PORT)
