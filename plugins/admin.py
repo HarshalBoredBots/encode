@@ -114,6 +114,55 @@ async def restart_cmd(client, message):
     await restart_bot()
 
 
+@Client.on_message(filters.command("forcesettings") & filters.private)
+@is_admin
+async def forcesettings_cmd(client, message):
+    """Owner-only: overwrite ALL users' settings with the owner's current settings."""
+    args = message.command[1:]
+
+    if not args or args[0].lower() != "confirm":
+        await message.reply_text(
+            "⚠️ **Force-Settings Warning**\n\n"
+            "This command will **overwrite every user's settings** in the database "
+            "with your own current settings — including codec, CRF, preset, resolution, "
+            "watermark, audio, rename pattern, output format, subtitle mode, and more.\n\n"
+            "**This cannot be undone.**\n\n"
+            "To proceed, type:\n"
+            "`/forcesettings confirm`"
+        )
+        return
+
+    owner_id = message.from_user.id
+    status_msg = await message.reply_text("⏳ Fetching your settings and applying to all users...")
+
+    owner_settings = await database.get_user_settings(owner_id)
+    updated_count = await database.overwrite_all_user_settings(owner_settings)
+
+    # Build a human-readable summary of the key settings being applied.
+    wm = owner_settings.get("watermark", {})
+    wm_enabled = "✅ Enabled" if wm.get("enabled") else "❌ Disabled"
+
+    summary = (
+        f"✅ **Force-Settings Applied**\n\n"
+        f"**Users updated:** `{updated_count}`\n\n"
+        f"**Settings pushed:**\n"
+        f"• Video Codec: `{owner_settings.get('codec', 'N/A')}`\n"
+        f"• CRF: `{owner_settings.get('crf', 'N/A')}`\n"
+        f"• Preset: `{owner_settings.get('preset', 'N/A')}`\n"
+        f"• Resolution: `{owner_settings.get('resolution', 'N/A')}`\n"
+        f"• Watermark: {wm_enabled}\n"
+        f"• Audio Codec: `{owner_settings.get('audio_codec', 'N/A')}`\n"
+        f"• Audio Bitrate: `{owner_settings.get('audio_bitrate', 'N/A')}`\n"
+        f"• Output Format: `{owner_settings.get('output_format', 'N/A')}`\n"
+        f"• Rename Pattern: `{owner_settings.get('rename_pattern', 'N/A')}`\n"
+        f"• Subtitle Mode: `{owner_settings.get('subtitle_mode', 'N/A')}`"
+    )
+
+    try:
+        await status_msg.edit_text(summary)
+    except Exception:
+        await message.reply_text(summary)
+
 @Client.on_message(filters.command("allqueue") & filters.private)
 async def allqueue_cmd(client, message):
     """Owner-only: show every user's active jobs in a concise table."""

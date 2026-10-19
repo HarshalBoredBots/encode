@@ -55,6 +55,22 @@ async def update_user_settings(user_id: int, settings: dict) -> None:
     )
     _cache[user_id] = (time.time(), s)
 
+async def overwrite_all_user_settings(settings: dict) -> int:
+    """Overwrite every user's settings with the provided dict.
+
+    Clears the in-memory cache afterwards so subsequent reads pick up the
+    new values from the database rather than stale cached copies.
+
+    Returns the number of documents that were actually modified.
+    """
+    s = normalize_settings(settings)
+    result = await _db.users.update_many(
+        {},
+        {"$set": {"settings": s}},
+    )
+    _cache.clear()
+    return result.modified_count
+
 async def full_userbase():
     return [d["_id"] async for d in _db.users.find({}, {"_id": 1})]
 
