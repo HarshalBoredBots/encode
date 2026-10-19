@@ -107,8 +107,7 @@ def ensure_fonts():
     os.makedirs(os.path.dirname(font_path), exist_ok=True)
     # Kufam is a Google Font available via their static CDN.
     url = (
-        "https://fonts.gstatic.com/s/kufam/v21/"
-        "C8c84cY7pG7w_oSJDszBXsKIQLl_lbs.ttf"
+        "https://github.com/google/fonts/raw/main/ofl/kufam/Kufam-SemiBold.ttf"
     )
     log.info("Downloading watermark font from Google Fonts -> %s", font_path)
     try:

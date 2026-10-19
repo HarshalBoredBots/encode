@@ -37,7 +37,7 @@ FORBIDDEN_FLAGS = {"-i", "-map", "-vf", "-filter_complex", "-filter:v", "-filter
 
 BAD_CHARS_RE = re.compile(r"[;&|`$()<>\\\n\r/]")
 
-def build_watermark_filter(wm: dict, video_duration: float, frame_width: int, frame_height: int) -> str:
+def build_watermark_filter(wm: dict, video_duration: float, frame_width: int, frame_height: int):
     import os
     raw_font = wm.get("font_path") or DEFAULT_FONT_PATH
     font_path = os.path.abspath(raw_font)
@@ -47,11 +47,11 @@ def build_watermark_filter(wm: dict, video_duration: float, frame_width: int, fr
     # error. Guard here so we raise a clear Python exception instead of letting
     # FFmpeg crash silently and killing the whole encode job.
     if not os.path.isfile(font_path):
-        raise FileNotFoundError(
-            f"Watermark font not found: {font_path!r}. "
-            "Place the font file at that path or update DEFAULT_FONT_PATH in "
-            "bot/utils/settings.py."
+        import logging as _logging
+        _logging.getLogger(__name__).warning(
+            "Watermark font not found at %s — skipping watermark overlay", font_path
         )
+        return None
 
     font_path = font_path.replace("'", r"\'")
     text = str(wm.get("text", "Encoded")).replace("'", r"\'").replace(":", r"\:")
@@ -360,7 +360,9 @@ def generate_ffmpeg_cmd(input_path: str, output_path: str, settings: dict, probe
             cmd += ["-r", "60"]
 
         if wm.get("enabled"):
-            vf_parts.append(build_watermark_filter(wm, duration, int(tw), int(th)))
+            _wm_filter = build_watermark_filter(wm, duration, int(tw), int(th))
+            if _wm_filter is not None:
+                vf_parts.append(_wm_filter)
 
         cmd += ["-vf", ",".join(vf_parts)]
 
