@@ -264,11 +264,21 @@ def generate_ffmpeg_cmd(input_path: str, output_path: str, settings: dict, probe
             if target_res_x265 == "1080p":
                 x265_pools = 1
                 x265_frame_threads = 1
+                # Force ultrafast for 1080p on a 1 GB dyno regardless of user setting.
+                # veryfast uses ~2x the encoder RAM of ultrafast at 1080p due to
+                # additional search partitions and sub-pixel refinement buffers.
+                # Quality difference vs veryfast is small (~0.5 dB PSNR) but the
+                # difference between finishing and OOM-crashing is not.
+                preset = "ultrafast"
                 # merange=24      : default 57 → cuts motion-estimation RAM ~80 MB
-                # rc-lookahead=20 : default 40 → halves lookahead buffer ~40 MB
-                # bframes=3       : x265 default; explicit keeps it stable
+                # rc-lookahead=10 : was 20 (down from default 40); x265 malloc'd
+                #                   3 MB for lookahead frame buffers at rc-lookahead=20
+                #                   on a 1080p frame — halving again cuts that to ~1.5 MB
+                # bframes=0       : disables B-frame reference buffer allocation
+                #                   entirely; saves ~20-30 MB at 1080p
+                # no-open-gop=1   : prevents extra GOP-boundary pre-allocation
                 # tune=fastdecode : reduces encoder-side DPB/reference buffers
-                x265_extra = "merange=24:rc-lookahead=20:bframes=3:tune=fastdecode"
+                x265_extra = "merange=24:rc-lookahead=10:bframes=0:no-open-gop=1:tune=fastdecode"
             else:
                 x265_pools = threads
                 x265_frame_threads = min(threads, 2)
