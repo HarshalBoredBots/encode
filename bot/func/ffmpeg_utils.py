@@ -206,15 +206,17 @@ def generate_ffmpeg_cmd(input_path: str, output_path: str, settings: dict, probe
         cmd += ["-ss", str(trim_start)]
     # Input-side decoder memory controls for H.264/HEVC on a 1 GB dyno:
     #
-    #   -threads 1      : single decode thread → no per-thread DPB copies
-    #   -flags low_delay: disables B-frame reordering → decoder flushes frames
-    #                     immediately instead of buffering a full DPB window
-    #   -refs 1         : tells the decoder to expect/use only 1 reference frame
-    #                     (overrides the stream's ref count for memory purposes)
+    #   -threads 1         : single decode thread → no per-thread DPB copies,
+    #                        saves ~40-60 MB per thread at 1080p
+    #   -flags:v low_delay : scoped to the video stream only (global -flags can
+    #                        break container demuxing); disables B-frame
+    #                        reordering so the decoder flushes frames immediately
+    #                        instead of buffering a full DPB window (~96 MB at
+    #                        1080p high-profile with 16 ref frames)
     #
-    # Together these cut H.264 decoder peak RSS from ~200 MB to ~40-60 MB at
-    # 1080p, which is the difference between a SIGBUS/OOM kill and a clean run.
-    cmd += ["-threads", "1", "-flags", "low_delay", "-refs", "1", "-i", input_path]
+    # NOTE: -refs is an encoder-only option and must NOT be placed here —
+    # FFmpeg rejects it as "not a decoding option" and refuses to open the file.
+    cmd += ["-threads", "1", "-flags:v", "low_delay", "-i", input_path]
     if trim_start > 0 and trim_end > trim_start:
         cmd += ["-to", str(trim_end - trim_start)]
 
