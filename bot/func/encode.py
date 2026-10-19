@@ -63,26 +63,17 @@ _FPS_RE = re.compile(rb"fps=\s*([\d.]+)")
 def _ffmpeg_preexec():
     """
     Called in the child process after fork() but before exec().
-    Caps FFmpeg's virtual address space to 900 MB.
 
-    Why 900 MB (raised from 750 MB):
-      - H.264 1080p decoding with the default thread count allocates large
-        reference-frame DPB buffers (~150-200 MB) before x265 encoding even
-        starts. The 750 MB cap was being hit by the *decoder*, not the encoder.
-      - 900 MB leaves ~100 MB for the Python/bot process on a 1 GB Standard-2X
-        dyno, which is enough under normal operation.
-      - The input thread count is also forced to 1 (see generate_ffmpeg_cmd)
-        which cuts decoder RAM by ~40-60 MB independently.
+    RLIMIT_AS (virtual address space) cap has been intentionally removed.
+    FFmpeg and x265 are mmap-heavy: they reserve large virtual address ranges
+    that are never fully committed to physical RAM. Capping virtual AS causes
+    malloc() failures inside x265 even when actual RSS is only ~200 MB, because
+    x265 reserves much larger virtual regions upfront. On a 64-bit dyno virtual
+    address space is ~128 TB — there is no reason to cap it. Physical RAM (RSS)
+    is the actual constraint and is controlled by the x265-params in ffmpeg_utils.py
+    (pools=1, frame-threads=1, wpp=0, pmode=0, pme=0, merange=16, rc-lookahead=5).
     """
-    # 950 MB virtual cap. Previous 900 MB triggered SIGBUS (physical RAM
-    # exhausted under the virtual limit) — the extra 50 MB gives the kernel
-    # enough headroom to back the mmap'd regions FFmpeg needs for the decoder
-    # DPB + encoder lookahead simultaneously without hitting physical RSS limit.
-    limit = 950 * 1024 * 1024  # 950 MB
-    try:
-        resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
-    except Exception:
-        pass  # non-fatal: proceed without the cap if setrlimit fails
+    pass
 
 
 async def _run_ffmpeg(cmd, job, status_msg, duration, settings):

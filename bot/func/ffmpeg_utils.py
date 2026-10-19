@@ -289,7 +289,13 @@ def generate_ffmpeg_cmd(input_path: str, output_path: str, settings: dict, probe
                 #                   entirely; saves ~20-30 MB at 1080p
                 # no-open-gop=1   : prevents extra GOP-boundary pre-allocation
                 # tune=fastdecode : reduces encoder-side DPB/reference buffers
-                x265_extra = "merange=24:rc-lookahead=10:bframes=0:no-open-gop=1:tune=fastdecode"
+                # wpp=0   : disables wavefront parallel processing — biggest
+                #           single RAM saving at 1080p (~150-200 MB)
+                # pmode=0 : disables parallel mode analysis
+                # pme=0   : disables parallel motion estimation
+                # merange=16 : further reduced from 24 (saves ~40 MB)
+                # rc-lookahead=5 : further reduced from 10 (saves ~20 MB)
+                x265_extra = "merange=16:rc-lookahead=5:bframes=0:no-open-gop=1:tune=fastdecode:wpp=0:pmode=0:pme=0"
             else:
                 x265_pools = threads
                 x265_frame_threads = min(threads, 2)
