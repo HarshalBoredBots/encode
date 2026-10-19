@@ -93,18 +93,26 @@ async def check_ffmpeg():
         raise RuntimeError(f"ffmpeg/ffprobe not installed: {e}")
 
 def ensure_fonts():
-    import urllib.request
     font_path = os.path.abspath(config.FONT_PATH)
     os.makedirs(os.path.dirname(font_path), exist_ok=True)
-    # Always re-download so a bad/corrupt font from a previous deploy can't persist.
-    # DejaVu Sans Bold — plain TTF, works reliably with FFmpeg's embedded libfreetype.
-    url = "https://github.com/dejavu-fonts/dejavu-fonts/raw/master/ttf/DejaVuSans-Bold.ttf"
-    log.info("Downloading watermark font -> %s", font_path)
-    try:
-        urllib.request.urlretrieve(url, font_path)
-        log.info("Font ready: %s (%d bytes)", font_path, os.path.getsize(font_path))
-    except Exception as e:
-        log.warning("Font download failed: %s — watermark will be skipped if no font uploaded", e)
+    # Delete any existing file first so a bad font from a previous deploy can't survive.
+    if os.path.exists(font_path):
+        os.remove(font_path)
+    # Heroku's Python buildpack ships DejaVu fonts in the system.
+    # Copy one directly — no network needed, no CDN, no 404 risk.
+    candidates = [
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+        "/usr/share/fonts/truetype/ttf-dejavu/DejaVuSans-Bold.ttf",
+    ]
+    import shutil
+    for candidate in candidates:
+        if os.path.isfile(candidate):
+            shutil.copy2(candidate, font_path)
+            log.info("Font ready (system copy): %s -> %s (%d bytes)",
+                     candidate, font_path, os.path.getsize(font_path))
+            return
+    log.warning("No system font found — watermark disabled until font is uploaded via settings")
 
 async def main():
     await check_ffmpeg()
